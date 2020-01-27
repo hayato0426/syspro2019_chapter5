@@ -2,6 +2,8 @@
 
 from smbus2 import SMBus
 import time
+import pandas as pd
+from datetime import datetime
 
 bus_number  = 1
 i2c_address = 0x76
@@ -14,10 +16,35 @@ digH = []
 
 t_fine = 0.0
 
+N = 3 # ƒ‹[ƒv‚Ì”
+PATH = 'output.json'
+
 def roop_every10s():
-	for i in range(10):
-		readData()
-		time.sleep(10.0)
+    t = []
+    p = []
+    h = []
+    data_time = []
+
+    for i in range(N):
+        data = readData()
+        t.append(data[0])
+        p.append(data[1])
+        h.append(data[2])
+
+        data_time.append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        time.sleep(10.0)
+
+    df = pd.DataFrame({"time": data_time,
+                       "temp": t,
+                       "press": p,
+                       "hum": h},)
+
+    index = ["id" + str(i) for i in range(N)]
+    df.index = index
+
+    print(df)
+    df.to_json(PATH, orient='index')
+
 
 
 def writeReg(reg_address, data):
@@ -25,7 +52,7 @@ def writeReg(reg_address, data):
 
 def get_calib_param():
 	calib = []
-	
+
 	for i in range (0x88,0x88+24):
 		calib.append(bus.read_byte_data(i2c_address,i))
 	calib.append(bus.read_byte_data(i2c_address,0xA1))
@@ -50,7 +77,7 @@ def get_calib_param():
 	digH.append((calib[28]<< 4) | (0x0F & calib[29]))
 	digH.append((calib[30]<< 4) | ((calib[29] >> 4) & 0x0F))
 	digH.append( calib[31] )
-	
+
 	for i in range(1,2):
 		if digT[i] & 0x8000:
 			digT[i] = (-digT[i] ^ 0xFFFF) + 1
@@ -70,22 +97,25 @@ def readData():
 	pres_raw = (data[0] << 12) | (data[1] << 4) | (data[2] >> 4)
 	temp_raw = (data[3] << 12) | (data[4] << 4) | (data[5] >> 4)
 	hum_raw  = (data[6] << 8)  |  data[7]
-	
-	compensate_T(temp_raw)
-	compensate_P(pres_raw)
-	compensate_H(hum_raw)
+
+        t = compensate_T(temp_raw)
+	p = compensate_P(pres_raw)
+	h = compensate_H(hum_raw)
+
+        return t, p, h
+
 
 def compensate_P(adc_P):
 	global  t_fine
 	pressure = 0.0
-	
+
 	v1 = (t_fine / 2.0) - 64000.0
 	v2 = (((v1 / 4.0) * (v1 / 4.0)) / 2048) * digP[5]
 	v2 = v2 + ((v1 * digP[4]) * 2.0)
 	v2 = (v2 / 4.0) + (digP[3] * 65536.0)
 	v1 = (((digP[2] * (((v1 / 4.0) * (v1 / 4.0)) / 8192)) / 8)  + ((digP[1] * v1) / 2.0)) / 262144
 	v1 = ((32768 + v1) * digP[0]) / 32768
-	
+
 	if v1 == 0:
 		return 0
 	pressure = ((1048576 - adc_P) - (v2 / 4096)) * 3125
@@ -98,6 +128,7 @@ def compensate_P(adc_P):
 	pressure = pressure + ((v1 + v2 + digP[6]) / 16.0)  
 
 	print "pressure : %7.2f hPa" % (pressure/100)
+        return "%7.2f" % (pressure/100)
 
 def compensate_T(adc_T):
 	global t_fine
@@ -105,7 +136,8 @@ def compensate_T(adc_T):
 	v2 = (adc_T / 131072.0 - digT[0] / 8192.0) * (adc_T / 131072.0 - digT[0] / 8192.0) * digT[2]
 	t_fine = v1 + v2
 	temperature = t_fine / 5120.0
-	print "temp : %-6.2f â„ƒ" % (temperature) 
+	print "temp : %-6.2f " % (temperature) 
+        return "%.2f" % (temperature)
 
 def compensate_H(adc_H):
 	global t_fine
@@ -119,7 +151,8 @@ def compensate_H(adc_H):
 		var_h = 100.0
 	elif var_h < 0.0:
 		var_h = 0.0
-	print "hum : %6.2f ï¼…" % (var_h)
+	print "hum : %6.2f “" % (var_h)
+        return "%.2f" % (var_h)
 
 
 def setup():
@@ -146,6 +179,7 @@ get_calib_param()
 
 if __name__ == '__main__':
 	try:
-		roop_every10s()
+		# readData()
+                roop_every10s()
 	except KeyboardInterrupt:
 		pass
